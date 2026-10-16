@@ -1,0 +1,153 @@
+{
+  "schema": "event-snap/2",
+  "event": {
+    "name": "サンプルVフェス 2026",
+    "date": "2026-11-03",
+    "venue": "サンプル会館 大ホール",
+    "hashtags": [
+      "#サンプルVフェス",
+      "#サンプルVフェス2026"
+    ],
+    "source_urls": [
+      "https://example.com/timetable"
+    ]
+  },
+  "performers": [
+    {
+      "name": "星野ミナト",
+      "reading": "ほしのみなと",
+      "hashtags": [
+        "#ミナトの星図",
+        "#ミナト画廊"
+      ],
+      "stage": "メイン",
+      "date": "",
+      "start": "12:00",
+      "end": "12:25",
+      "source_url": "",
+      "confidence": "high",
+      "note": "",
+      "accounts": [
+        {
+          "platform": "x",
+          "id": "sample_minato"
+        },
+        {
+          "platform": "youtube",
+          "id": "@sample_minato"
+        }
+      ],
+      "bio": "星を数えるのが好きな新人VTuber。毎週水曜21時に歌枠。ファンアートは #ミナト画廊 へ（※架空のサンプルです）",
+      "youtube_about": "星と音楽をテーマに、歌枠・雑談・星空観察配信を行うチャンネル。週3回ほど配信。（架空のサンプル）"
+    },
+    {
+      "name": "月白ルナ",
+      "reading": "げっぱくるな",
+      "hashtags": [
+        "#月白ルナ",
+        "#ルナアート"
+      ],
+      "stage": "メイン",
+      "date": "",
+      "start": "12:30",
+      "end": "12:55",
+      "source_url": "",
+      "confidence": "high",
+      "note": "",
+      "accounts": [
+        {
+          "platform": "x",
+          "id": "sample_luna"
+        }
+      ],
+      "bio": "",
+      "youtube_about": ""
+    },
+    {
+      "name": "黒羽カラス",
+      "reading": "くろばねからす",
+      "hashtags": [
+        "#カラスの巣"
+      ],
+      "stage": "サブ",
+      "date": "",
+      "start": "13:00",
+      "end": "13:25",
+      "source_url": "",
+      "confidence": "medium",
+      "note": "X なし。Instagram・TikTok で活動",
+      "accounts": [
+        {
+          "platform": "instagram",
+          "id": "sample_karasu"
+        },
+        {
+          "platform": "tiktok",
+          "id": "sample_karasu"
+        }
+      ],
+      "bio": "イラストとダンス動画を投稿しています（架空のサンプル）",
+      "youtube_about": ""
+    },
+    {
+      "name": "花咲ひより",
+      "reading": "はなさきひより",
+      "hashtags": [],
+      "stage": "メイン",
+      "date": "",
+      "start": "13:30",
+      "end": "13:55",
+      "source_url": "",
+      "confidence": "low",
+      "note": "X アカウントを特定できず",
+      "accounts": [],
+      "bio": "",
+      "youtube_about": ""
+    },
+    {
+      "name": "雪村シオン",
+      "reading": "ゆきむらしおん",
+      "hashtags": [
+        "#シオンの雪景色",
+        "#シオン絵"
+      ],
+      "stage": "サブ",
+      "date": "",
+      "start": "14:00",
+      "end": "14:25",
+      "source_url": "",
+      "confidence": "high",
+      "note": "",
+      "accounts": [
+        {
+          "platform": "x",
+          "id": "sample_shion"
+        }
+      ],
+      "bio": "",
+      "youtube_about": ""
+    },
+    {
+      "name": "朝霧コハク",
+      "reading": "あさぎりこはく",
+      "hashtags": [
+        "#コハクと朝ごはん"
+      ],
+      "stage": "メイン",
+      "date": "",
+      "start": "14:30",
+      "end": "14:55",
+      "source_url": "",
+      "confidence": "high",
+      "note": "",
+      "accounts": [
+        {
+          "platform": "x",
+          "id": "sample_kohaku"
+        }
+      ],
+      "bio": "",
+      "youtube_about": ""
+    }
+  ]
+}

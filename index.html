@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#6b4fd8">
+<title>EventSnap</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="appbar">
+  <div class="appbar-title">EventSnap</div>
+  <select id="evSelect" aria-label="イベントを選ぶ"></select>
+</header>
+
+<main>
+  <!-- ===================== 投稿 ===================== -->
+  <section id="tab-post" class="tab" data-tab="post">
+    <div id="noEvent" class="notice" hidden>
+      まだイベントがありません。<br>
+      「イベント」タブで Grok の出力を貼り付けるか、サンプルで試してください。
+      <button type="button" class="btn" id="btnSample1">サンプルで試す</button>
+    </div>
+
+    <div class="photo-actions">
+      <label class="btn big">📷 撮る<input type="file" accept="image/*" capture="environment" id="inCamera" hidden></label>
+      <label class="btn big">🖼 選ぶ（複数可）<input type="file" accept="image/*" multiple id="inGallery" hidden></label>
+    </div>
+    <div id="queue" class="queue"></div>
+    <div id="preview" class="preview"></div>
+
+    <h2>出演者</h2>
+    <div id="refInfo" class="muted small"></div>
+    <input type="search" id="pSearch" placeholder="名前・読み・タグで検索" autocomplete="off">
+    <div id="selChips" class="chips"></div>
+    <div id="pList" class="plist"></div>
+
+    <h2>下書き</h2>
+    <textarea id="comment" rows="3" placeholder="コメントを書く（空でもOK）"></textarea>
+    <div class="label">タグ（タップで付ける／外す）</div>
+    <div id="tagChips" class="chips"></div>
+    <div class="label">投稿される本文</div>
+    <pre id="draft" class="draft"></pre>
+    <div id="count" class="count"></div>
+    <div class="actionbar">
+      <button type="button" id="btnCopy" class="btn">本文コピー</button>
+      <button type="button" id="btnShare" class="btn primary">Xで投稿</button>
+    </div>
+  </section>
+
+  <!-- ===================== イベント ===================== -->
+  <section id="tab-event" class="tab" data-tab="event" hidden>
+    <h2>Grok で出演者リストを作る</h2>
+    <div class="card">
+      <div class="small muted">項目を入れて「プロンプトをコピー」→ Grok に貼り付け（タイムテーブル画像があれば一緒に添付）</div>
+      <label class="field">イベント名<input type="text" id="gName" placeholder="例：〇〇フェス 2026"></label>
+      <label class="field">開催日<input type="text" id="gDate" placeholder="例：2026-11-03（複数日なら 2026-11-03〜04）"></label>
+      <label class="field">対象日（任意。人数が多い時は日ごとに分けて頼むと確実）<input type="text" id="gDay" placeholder="例：2026-10-18 のみ"></label>
+      <label class="field">公式URL・告知ポスト<input type="text" id="gUrl" placeholder="https://..."></label>
+      <label class="field">補足（任意）<input type="text" id="gExtra" placeholder="例：2日目のみ／ステージA・Bあり"></label>
+      <button type="button" class="btn primary" id="btnPrompt">プロンプトをコピー</button>
+    </div>
+
+    <h2>Grok の出力を読み込む</h2>
+    <div class="card">
+      <textarea id="importText" rows="5" placeholder="Grok の回答をそのまま貼り付け（前後に文章があっても OK）"></textarea>
+      <div class="row">
+        <button type="button" class="btn primary" id="btnImport">読み込む</button>
+        <label class="btn">ファイルから<input type="file" accept=".json,application/json,text/plain" id="inImportFile" hidden></label>
+        <button type="button" class="btn" id="btnSample2">サンプル</button>
+      </div>
+    </div>
+
+    <h2>Gemini で補完する（任意）</h2>
+    <div class="card">
+      <div class="small muted">YouTube チャンネル紹介・X 以外の SNS・要確認の人の再調査を Gemini に頼みます。回答は上の「読み込む」に貼り付け →「補完する」を選ぶ。</div>
+      <label class="field">対象
+        <select id="gemTarget">
+          <option value="missing">要確認・SNS 未取得・タグなしの人</option>
+          <option value="intro">紹介文（プロフィール・YouTube）が未取得の人</option>
+          <option value="all">全員</option>
+        </select>
+      </label>
+      <div class="row2">
+        <label class="field">出演日<select id="gemDay"></select></label>
+        <label class="field">1回の人数
+          <select id="gemLimit">
+            <option value="5">5人ずつ</option>
+            <option value="10" selected>10人ずつ</option>
+            <option value="0">全員まとめて</option>
+          </select>
+        </label>
+      </div>
+      <div class="row" style="align-items:center">
+        <button type="button" class="btn primary" id="btnGemini">補完用プロンプトをコピー</button>
+        <span class="small muted" id="gemCount"></span>
+      </div>
+    </div>
+
+    <h2>保存中のイベント</h2>
+    <div id="evList"></div>
+
+    <h2>データ点検</h2>
+    <div class="card" id="checkCard"><div class="small muted">イベントを選ぶと表示されます</div></div>
+
+    <h2 id="perfHead">出演者</h2>
+    <div class="row">
+      <button type="button" class="btn" id="btnAddPerf">＋ 出演者を追加</button>
+      <button type="button" class="btn" id="btnEditEvent">イベント情報を編集</button>
+    </div>
+    <div id="perfEditList"></div>
+  </section>
+
+  <!-- ===================== 設定 ===================== -->
+  <section id="tab-settings" class="tab" data-tab="settings" hidden>
+    <h2>本文のひな形</h2>
+    <div class="card">
+      <textarea id="sTemplate" rows="5"></textarea>
+      <div class="small muted">
+        使える記号：{comment} コメント／{names} 出演者名／{tags} 出演者のタグ／{event_tags} イベント共通タグ／{event} イベント名
+      </div>
+      <label class="field">名前の後ろに付ける敬称<input type="text" id="sHonorific" placeholder="例：さん（空なら付けない）"></label>
+      <label class="field">複数の名前の区切り<input type="text" id="sSep"></label>
+      <label class="field">出演者タグの初期状態
+        <select id="sTagMode">
+          <option value="first">先頭の1つだけ付ける（エゴサ用）</option>
+          <option value="all">すべて付ける</option>
+        </select>
+      </label>
+      <div class="row">
+        <button type="button" class="btn primary" id="btnSaveSettings">保存</button>
+        <button type="button" class="btn" id="btnResetSettings">初期値に戻す</button>
+      </div>
+    </div>
+
+    <h2>データ</h2>
+    <div class="card">
+      <div class="small muted">データはこの端末のブラウザの中だけに保存されます（サーバーには送りません）。</div>
+      <div class="row">
+        <button type="button" class="btn" id="btnClearPosted">投稿済みの記録を消す</button>
+      </div>
+    </div>
+    <div class="small muted" id="about"></div>
+  </section>
+</main>
+
+<nav class="tabbar">
+  <button type="button" data-go="post" class="on">📷<span>投稿</span></button>
+  <button type="button" data-go="event">📋<span>イベント</span></button>
+  <button type="button" data-go="settings">⚙<span>設定</span></button>
+</nav>
+
+<!-- 出演者の編集 -->
+<dialog id="dlgPerf">
+  <form method="dialog" id="formPerf">
+    <h3 id="dlgPerfTitle">出演者を編集</h3>
+    <label class="field">名前<input type="text" name="name" required></label>
+    <label class="field">読み<input type="text" name="reading"></label>
+    <label class="field">ハッシュタグ（空白区切り。先頭がエゴサ用）<input type="text" name="hashtags"></label>
+    <div class="small muted">SNS（確認・紹介用。下書きには入れません）</div>
+    <div class="row2">
+      <label class="field">X の ID<input type="text" name="x_id" placeholder="@なし"></label>
+      <label class="field">Instagram<input type="text" name="instagram"></label>
+    </div>
+    <div class="row2">
+      <label class="field">TikTok<input type="text" name="tiktok"></label>
+      <label class="field">YouTube（URL か @ハンドル）<input type="text" name="youtube"></label>
+    </div>
+    <label class="field">URL を貼り付け（lit.link・YouTube・Instagram 等。空白区切りで複数可。種類は自動判別）<input type="text" name="otherlinks" placeholder="https://lit.link/..."></label>
+    <label class="field">プロフィール（原文）<textarea name="bio" rows="3"></textarea></label>
+    <label class="field">YouTube チャンネル紹介（要約）<textarea name="youtube_about" rows="3"></textarea></label>
+    <div class="row2">
+      <label class="field">開始<input type="time" name="start"></label>
+      <label class="field">終了<input type="time" name="end"></label>
+    </div>
+    <div class="row2">
+      <label class="field">出演日<input type="date" name="date"></label>
+      <label class="field">ステージ<input type="text" name="stage"></label>
+    </div>
+    <label class="field">確信度
+      <select name="confidence">
+        <option value="high">high（確認済み）</option>
+        <option value="medium">medium</option>
+        <option value="low">low（要確認）</option>
+      </select>
+    </label>
+    <label class="field">メモ<input type="text" name="note"></label>
+    <div class="row">
+      <button type="submit" value="save" class="btn primary">保存</button>
+      <button type="submit" value="cancel" class="btn" formnovalidate>キャンセル</button>
+      <button type="button" class="btn danger" id="btnDelPerf">削除</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- イベント情報の編集 -->
+<dialog id="dlgEvent">
+  <form method="dialog" id="formEvent">
+    <h3>イベント情報を編集</h3>
+    <label class="field">イベント名<input type="text" name="name" required></label>
+    <label class="field">開催日<input type="date" name="date"></label>
+    <label class="field">会場<input type="text" name="venue"></label>
+    <label class="field">共通ハッシュタグ（空白区切り）<input type="text" name="hashtags"></label>
+    <div class="row">
+      <button type="submit" value="save" class="btn primary">保存</button>
+      <button type="submit" value="cancel" class="btn" formnovalidate>キャンセル</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- 出演者の紹介 -->
+<dialog id="dlgInfo">
+  <div id="infoBody"></div>
+  <div class="row">
+    <button type="button" class="btn primary" id="btnInfoSelect">この人を選ぶ</button>
+    <button type="button" class="btn" id="btnInfoEdit">編集</button>
+    <button type="button" class="btn" id="btnInfoClose">閉じる</button>
+  </div>
+</dialog>
+
+<!-- 選択ダイアログ -->
+<dialog id="dlgChoice">
+  <h3 id="choiceTitle"></h3>
+  <div id="choiceMsg" class="small" style="white-space:pre-wrap"></div>
+  <div class="row" id="choiceBtns"></div>
+</dialog>
+
+<div id="toast" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>
