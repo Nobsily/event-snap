@@ -3,7 +3,7 @@
  */
 'use strict';
 
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const SCHEMA = 'event-snap/2';
 
 // ------------------------------------------------------------------ 保存
@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS = {
   honorific: '',
   nameSep: '、',
   tagMode: 'first',
+  autoSave: true,
 };
 
 const state = {
@@ -553,7 +554,7 @@ function renderQueue() {
       .map((it, i) => {
         const n = state.pick.indexOf(it.id);
         return '<button type="button" class="qitem' + (i === state.current ? ' cur' : '') + (it.done ? ' done' : '') + (n >= 0 ? ' picked' : '') + '" data-q="' + i + '">' +
-          '<img src="' + it.url + '" alt="">' +
+          (isVideo(it) ? '<video src="' + it.url + '#t=0.1" muted preload="metadata"></video><span class="qvid">▶</span>' : '<img src="' + it.url + '" alt="">') +
           (n >= 0 ? '<span class="qnum">' + (n + 1) + '</span>' : '') +
           (it.done ? '<span class="qbadge">済</span>' : '') + '</button>';
       })
@@ -565,13 +566,14 @@ function renderQueue() {
   const remain = state.queue.filter((x) => !x.done).length;
   const n = state.pick.indexOf(it.id);
   const full = n < 0 && state.pick.length >= MAX_PICK;
-  pv.innerHTML = '<img src="' + it.url + '" alt="表示中の写真">' +
+  pv.innerHTML = (isVideo(it) ? '<video src="' + it.url + '" controls playsinline preload="metadata"></video>' : '<img src="' + it.url + '" alt="表示中の写真">') +
     '<div class="pmeta small muted"><span>' + (it.time ? '撮影 ' + esc(hm(new Date(it.time))) : '') +
     (state.queue.length > 1 ? '　' + (state.current + 1) + ' / ' + state.queue.length + '（未投稿 ' + remain + '）' : '') + '</span></div>' +
     '<div class="row pick-row">' +
     '<button type="button" class="btn ' + (n >= 0 ? 'primary' : '') + '" id="btnPick"' + (full ? ' disabled' : '') + '>' +
       (n >= 0 ? '✓ 投稿に使う（' + (n + 1) + '枚目）' : full ? '4枚まで選択済み' : '＋ 投稿に使う') + '</button>' +
     '<button type="button" class="btn" id="btnRemovePhoto">一覧から消す</button>' +
+    '<button type="button" class="btn" id="btnSaveMedia">端末に保存</button>' +
     (state.queue.some((x) => x.done) ? '<button type="button" class="btn" id="btnClearDone">投稿済みを消す</button>' : '') +
     '</div>' +
     '<div class="small muted">この投稿に使う写真：' + (state.pick.length ? state.pick.length + '枚（最大4枚・選んだ順に添付）' : 'なし') +
@@ -588,7 +590,7 @@ function togglePick(id) {
 }
 
 function clearDonePhotos() {
-  state.queue.filter((x) => x.done).forEach((x) => URL.revokeObjectURL(x.url));
+  state.queue.filter((x) => x.done).forEach((x) => { URL.revokeObjectURL(x.url); mediaStore.del(x.id); });
   const curId = state.queue[state.current] && state.queue[state.current].id;
   state.queue = state.queue.filter((x) => !x.done);
   const idx = state.queue.findIndex((x) => x.id === curId);
@@ -939,18 +941,25 @@ function renderSettings() {
   $('#sHonorific').value = s.honorific;
   $('#sSep').value = s.nameSep;
   $('#sTagMode').value = s.tagMode;
+  $('#sAutoSave').checked = s.autoSave !== false;
   $('#about').textContent = 'EventSnap v' + APP_VERSION + '・イベント ' + state.events.length + ' 件・投稿記録 ' + state.posted.length + ' 件';
 }
 
 // ------------------------------------------------------------------ 写真
-function addPhotos(files) {
-  const list = Array.from(files || []).filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name));
+function isVideo(it) { return /^video\//.test(it.file.type) || /\.(mp4|mov|webm|3gp|m4v)$/i.test(it.file.name); }
+
+function addPhotos(files, opts) {
+  opts = opts || {};
+  const list = Array.from(files || []).filter((f) => /^(image|video)\//.test(f.type) || /\.(jpe?g|png|heic|heif|webp|mp4|mov|webm|3gp|m4v)$/i.test(f.name));
   if (!list.length) return;
   list.sort((a, b) => a.lastModified - b.lastModified);
   const firstNew = state.queue.length;
   for (const f of list) {
-    state.queue.push({ id: uid('q'), file: f, url: URL.createObjectURL(f), time: f.lastModified || Date.now(), done: false });
+    const item = { id: uid('q'), file: f, url: URL.createObjectURL(f), time: f.lastModified || Date.now(), done: false };
+    state.queue.push(item);
+    mediaStore.put(item);
   }
+  if (opts.quiet) { if (!state.pick.length) state.pick.push(state.queue[firstNew].id); state.current = state.queue.length - 1; return; }
   state.current = firstNew;
   if (!state.pick.length) state.pick.push(state.queue[firstNew].id);
   render();
@@ -961,6 +970,7 @@ function removeCurrentPhoto() {
   const it = state.queue[state.current];
   if (!it) return;
   URL.revokeObjectURL(it.url);
+  mediaStore.del(it.id);
   state.pick = state.pick.filter((id) => id !== it.id);
   state.queue.splice(state.current, 1);
   state.current = Math.min(state.current, state.queue.length - 1);
@@ -1027,7 +1037,7 @@ async function sharePost() {
 
 function afterPosted(ev, items, copied) {
   recordPosted(ev);
-  items.forEach((x) => { x.done = true; });
+  items.forEach((x) => { x.done = true; mediaStore.put(x); });
   state.pick = [];
   const moved = items.length ? nextPhoto() : false;
   if (!moved) resetDraft();
@@ -1138,6 +1148,7 @@ function bind() {
 
   $('#inCamera').addEventListener('change', (e) => { addPhotos(e.target.files); e.target.value = ''; });
   $('#inGallery').addEventListener('change', (e) => { addPhotos(e.target.files); e.target.value = ''; });
+  bindCamera();
 
   $('#queue').addEventListener('click', (e) => {
     const b = e.target.closest('[data-q]');
@@ -1148,6 +1159,7 @@ function bind() {
   $('#preview').addEventListener('click', (e) => {
     if (e.target.id === 'btnRemovePhoto') removeCurrentPhoto();
     if (e.target.id === 'btnClearDone') clearDonePhotos();
+    if (e.target.id === 'btnSaveMedia') { const it = state.queue[state.current]; if (it) { downloadFile(it.file); toast('ダウンロードフォルダに保存しました'); } }
     if (e.target.closest('#btnPick')) { const it = state.queue[state.current]; if (it) togglePick(it.id); }
   });
 
@@ -1295,6 +1307,7 @@ function bind() {
       honorific: $('#sHonorific').value,
       nameSep: $('#sSep').value,
       tagMode: $('#sTagMode').value,
+      autoSave: $('#sAutoSave').checked,
     };
     store.set(K.settings, state.settings);
     toast('保存しました');
@@ -1317,6 +1330,233 @@ function bind() {
   setInterval(() => { if (state.tab === 'post') renderPerformers(activeEvent()); }, 60000);
 }
 
+// ------------------------------------------------------------------ 写真・動画の保存（IndexedDB）
+// アプリが閉じられても（X に切り替えた時など）撮った写真が消えないよう、端末のブラウザ内に保存する
+const mediaStore = {
+  db: null,
+  open() {
+    if (this.db) return Promise.resolve(this.db);
+    return new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) { reject(new Error('no indexedDB')); return; }
+      const req = indexedDB.open('eventsnap', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('media', { keyPath: 'id' });
+      req.onsuccess = () => { this.db = req.result; resolve(this.db); };
+      req.onerror = () => reject(req.error);
+    });
+  },
+  async tx(mode, fn) {
+    try {
+      const db = await this.open();
+      return await new Promise((resolve, reject) => {
+        const t = db.transaction('media', mode);
+        const r = fn(t.objectStore('media'));
+        t.oncomplete = () => resolve(r && r.result);
+        t.onerror = () => reject(t.error);
+      });
+    } catch (e) { return null; }
+  },
+  put(it) {
+    return this.tx('readwrite', (st) => st.put({ id: it.id, blob: it.file, name: it.file.name, type: it.file.type, time: it.time, done: !!it.done }));
+  },
+  del(id) { return this.tx('readwrite', (st) => st.delete(id)); },
+  async loadAll() {
+    const rows = (await this.tx('readonly', (st) => st.getAll())) || [];
+    return rows.map((r) => {
+      const file = new File([r.blob], r.name || (r.id + '.jpg'), { type: r.type || r.blob.type, lastModified: r.time });
+      return { id: r.id, file, url: URL.createObjectURL(file), time: r.time, done: !!r.done };
+    });
+  },
+};
+
+function downloadFile(file) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+
+// ------------------------------------------------------------------ 連写カメラ
+const cam = {
+  stream: null, track: null, imageCapture: null, audioTrack: null,
+  mode: 'photo', quality: 'fast', count: 0,
+  recorder: null, chunks: [], recStart: 0, timer: null, busy: false,
+};
+
+function stamp(d) { return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '_' + pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds()); }
+
+async function openCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('この環境では連写カメラを使えません。端末のカメラで撮ってください', 3000);
+    $('#inCamera').click();
+    return;
+  }
+  $('#cam').hidden = false;
+  cam.count = 0;
+  $('#camCount').textContent = '';
+  $('#camThumb').innerHTML = '';
+  setCamMode('photo');
+  try {
+    cam.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
+      audio: false,
+    });
+  } catch (e) {
+    $('#cam').hidden = true;
+    toast('カメラを起動できませんでした（' + (e.name || e.message) + '）。ブラウザのカメラ許可を確認してください', 4000);
+    return;
+  }
+  cam.track = cam.stream.getVideoTracks()[0];
+  $('#camVideo').srcObject = cam.stream;
+  cam.imageCapture = null;
+  if ('ImageCapture' in window) { try { cam.imageCapture = new ImageCapture(cam.track); } catch (e) { cam.imageCapture = null; } }
+  $('#camQuality').hidden = !cam.imageCapture;
+  setupZoom();
+  updateCamInfo();
+}
+
+function setupZoom() {
+  const box = $('#camZoom');
+  box.innerHTML = '';
+  const caps = cam.track && cam.track.getCapabilities ? cam.track.getCapabilities() : {};
+  if (!caps.zoom) return;
+  const min = caps.zoom.min, max = caps.zoom.max;
+  const steps = Array.from(new Set([min, 1, 2, 3, 5, 10, max].filter((z) => z >= min && z <= max).map((z) => Math.round(z * 10) / 10))).sort((a, b) => a - b);
+  const cur = (cam.track.getSettings && cam.track.getSettings().zoom) || 1;
+  box.innerHTML = steps.map((z) => '<button type="button" data-zoom="' + z + '" class="' + (Math.abs(z - cur) < 0.05 ? 'on' : '') + '">' + z + '×</button>').join('');
+}
+
+function updateCamInfo() {
+  const st = cam.track && cam.track.getSettings ? cam.track.getSettings() : {};
+  const res = st.width && st.height ? st.width + '×' + st.height : '';
+  if (cam.recorder && cam.recorder.state === 'recording') return;
+  $('#camInfo').classList.remove('rec');
+  $('#camInfo').textContent = (cam.mode === 'photo' ? '写真' : '動画') + (res ? '・' + res : '') + (cam.count ? '・' + cam.count + '件撮影' : '');
+}
+
+function setCamMode(m) {
+  if (cam.recorder && cam.recorder.state === 'recording') return;
+  cam.mode = m;
+  document.querySelectorAll('[data-cammode]').forEach((b) => b.classList.toggle('on', b.dataset.cammode === m));
+  $('#camShutter').classList.toggle('video', m === 'video');
+  updateCamInfo();
+}
+
+function flash() {
+  const f = $('#camFlash');
+  f.classList.add('on');
+  setTimeout(() => f.classList.remove('on'), 80);
+  if (navigator.vibrate) navigator.vibrate(20);
+}
+
+function camAdd(file) {
+  addPhotos([file], { quiet: true });
+  cam.count++;
+  $('#camCount').textContent = cam.count;
+  const url = state.queue[state.queue.length - 1].url;
+  $('#camThumb').innerHTML = /^video\//.test(file.type) ? '<video src="' + url + '#t=0.1" muted></video>' : '<img src="' + url + '" alt="">';
+  if (state.settings.autoSave !== false) downloadFile(file);
+  updateCamInfo();
+}
+
+async function takeShot() {
+  if (cam.busy || !cam.track) return;
+  cam.busy = true;
+  flash();
+  try {
+    let blob = null;
+    if (cam.quality === 'high' && cam.imageCapture) {
+      try { blob = await cam.imageCapture.takePhoto(); } catch (e) { blob = null; }
+    }
+    if (!blob) {
+      const v = $('#camVideo');
+      const c = document.createElement('canvas');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext('2d').drawImage(v, 0, 0);
+      blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.92));
+    }
+    if (!blob) throw new Error('撮影できませんでした');
+    const now = new Date();
+    camAdd(new File([blob], 'eventsnap_' + stamp(now) + '_' + (cam.count + 1) + '.jpg', { type: 'image/jpeg', lastModified: now.getTime() }));
+  } catch (e) {
+    toast(e.message || '撮影できませんでした');
+  } finally {
+    cam.busy = false;
+  }
+}
+
+function pickVideoMime() {
+  const list = ['video/mp4;codecs=avc1,mp4a', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+  return list.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || '';
+}
+
+async function toggleRecord() {
+  if (cam.recorder && cam.recorder.state === 'recording') { cam.recorder.stop(); return; }
+  if (!window.MediaRecorder) { toast('この端末では動画を撮れません'); return; }
+  if (!cam.audioTrack) {
+    try { cam.audioTrack = (await navigator.mediaDevices.getUserMedia({ audio: true })).getAudioTracks()[0]; } catch (e) { cam.audioTrack = null; }
+  }
+  const tracks = [cam.track].concat(cam.audioTrack ? [cam.audioTrack] : []);
+  const mime = pickVideoMime();
+  cam.chunks = [];
+  try {
+    cam.recorder = new MediaRecorder(new MediaStream(tracks), mime ? { mimeType: mime } : undefined);
+  } catch (e) { toast('録画を開始できませんでした'); return; }
+  cam.recorder.ondataavailable = (e) => { if (e.data && e.data.size) cam.chunks.push(e.data); };
+  cam.recorder.onstop = () => {
+    clearInterval(cam.timer);
+    $('#camShutter').classList.remove('recording');
+    const type = (cam.recorder.mimeType || mime || 'video/webm').split(';')[0];
+    const ext = type.includes('mp4') ? 'mp4' : 'webm';
+    const now = new Date();
+    if (cam.chunks.length) camAdd(new File(cam.chunks, 'eventsnap_' + stamp(now) + '.' + ext, { type, lastModified: now.getTime() }));
+    if (ext !== 'mp4') toast('この端末では WebM 形式で保存されました（X に投稿できない場合があります）', 4000);
+    updateCamInfo();
+  };
+  cam.recorder.start(1000);
+  cam.recStart = Date.now();
+  $('#camShutter').classList.add('recording');
+  const info = $('#camInfo');
+  info.classList.add('rec');
+  const tick = () => { const s = Math.floor((Date.now() - cam.recStart) / 1000); info.textContent = '● 録画中 ' + Math.floor(s / 60) + ':' + pad2(s % 60); };
+  tick();
+  cam.timer = setInterval(tick, 500);
+}
+
+async function closeCamera() {
+  if (cam.recorder && cam.recorder.state === 'recording') {
+    await new Promise((r) => { const prev = cam.recorder.onstop; cam.recorder.onstop = () => { prev(); r(); }; cam.recorder.stop(); });
+  }
+  if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
+  if (cam.audioTrack) { cam.audioTrack.stop(); cam.audioTrack = null; }
+  cam.stream = null; cam.track = null;
+  $('#camVideo').srcObject = null;
+  $('#cam').hidden = true;
+  render();
+  if (cam.count) toast(cam.count + '件を追加しました。使う写真を選んでください（最大4枚）', 2500);
+}
+
+function bindCamera() {
+  $('#btnCam').addEventListener('click', openCamera);
+  $('#camClose').addEventListener('click', closeCamera);
+  $('#camDone').addEventListener('click', closeCamera);
+  $('#camShutter').addEventListener('click', () => (cam.mode === 'photo' ? takeShot() : toggleRecord()));
+  document.querySelectorAll('[data-cammode]').forEach((b) => b.addEventListener('click', () => setCamMode(b.dataset.cammode)));
+  $('#camQuality').addEventListener('click', () => {
+    cam.quality = cam.quality === 'fast' ? 'high' : 'fast';
+    $('#camQuality').textContent = cam.quality === 'fast' ? '標準' : '高画質';
+    toast(cam.quality === 'fast' ? '標準：すばやく連写できます' : '高画質：1枚ごとに少し時間がかかります');
+  });
+  $('#camZoom').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-zoom]');
+    if (!b || !cam.track) return;
+    try { await cam.track.applyConstraints({ advanced: [{ zoom: Number(b.dataset.zoom) }] }); } catch (err) { /* 非対応 */ }
+    setupZoom();
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && cam.stream && !(cam.recorder && cam.recorder.state === 'recording')) closeCamera(); });
+}
+
 // ------------------------------------------------------------------ 起動
 // v0.1 で保存したデータ（x_id だけ）を、SNS アカウント一覧の形に移す
 function migrate() {
@@ -1333,6 +1573,17 @@ function migrate() {
 migrate();
 bind();
 go('post');
+mediaStore.loadAll().then((items) => {
+  if (!items.length) return;
+  for (const it of items) state.queue.push(it);
+  state.queue.sort((a, b) => a.time - b.time);
+  const idx = state.queue.findIndex((x) => !x.done);
+  state.current = idx >= 0 ? idx : state.queue.length - 1;
+  if (idx >= 0) state.pick = [state.queue[idx].id];
+  render();
+  const n = items.filter((x) => !x.done).length;
+  if (n) toast('前回の写真・動画 ' + n + ' 件を読み込みました');
+});
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
