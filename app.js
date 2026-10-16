@@ -3,7 +3,7 @@
  */
 'use strict';
 
-const APP_VERSION = '0.2.2';
+const APP_VERSION = '0.2.3';
 const SCHEMA = 'event-snap/2';
 
 // ------------------------------------------------------------------ 保存
@@ -28,7 +28,7 @@ const store = {
 };
 
 const DEFAULT_SETTINGS = {
-  template: '{comment}\n\n{names}\n{tags}\n{event_tags}',
+  template: '{event_tags}\n{tags}\n{names}\n\n{comment}',
   honorific: '',
   nameSep: '、',
   tagMode: 'first',
@@ -37,7 +37,12 @@ const DEFAULT_SETTINGS = {
 const state = {
   events: store.get(K.events, []),
   activeId: store.get(K.active, null),
-  settings: Object.assign({}, DEFAULT_SETTINGS, store.get(K.settings, {})),
+  settings: (() => {
+    const s = Object.assign({}, DEFAULT_SETTINGS, store.get(K.settings, {}));
+    // v0.2.2 までの初期ひな形のままなら、新しい並び（共通タグ→本人タグ→名前）に置き換える
+    if (s.template === '{comment}\n\n{names}\n{tags}\n{event_tags}') s.template = DEFAULT_SETTINGS.template;
+    return s;
+  })(),
   posted: store.get(K.posted, []),
   queue: [],          // {id, file, url, time, done}
   current: -1,        // queue の何番目を表示中か

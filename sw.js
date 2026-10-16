@@ -1,7 +1,7 @@
 /* EventSnap service worker - 圏外でも開けるように画面一式をキャッシュする
  * 画面を更新したら CACHE の版数を上げる（古いキャッシュは自動で消える）
  */
-const CACHE = 'event-snap-v0.2.2';
+const CACHE = 'event-snap-v0.2.3';
 const ASSETS = [
   './',
   './index.html',
