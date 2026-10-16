@@ -3,7 +3,7 @@
  */
 'use strict';
 
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 const SCHEMA = 'event-snap/2';
 
 // ------------------------------------------------------------------ 保存
@@ -32,7 +32,8 @@ const DEFAULT_SETTINGS = {
   honorific: '',
   nameSep: '、',
   tagMode: 'first',
-  autoSave: true,
+  saveMode: 'posted',   // 連写カメラの写真の端末保存：posted=投稿に使ったものだけ / all=撮った全部 / none=保存しない
+  camQuality: 'fast',
 };
 
 const state = {
@@ -42,6 +43,7 @@ const state = {
     const s = Object.assign({}, DEFAULT_SETTINGS, store.get(K.settings, {}));
     // v0.2.2 までの初期ひな形のままなら、新しい並び（共通タグ→本人タグ→名前）に置き換える
     if (s.template === '{comment}\n\n{names}\n{tags}\n{event_tags}') s.template = DEFAULT_SETTINGS.template;
+    if ('autoSave' in s) { if (s.autoSave === false) s.saveMode = 'none'; delete s.autoSave; }  // v0.4.0 の設定を移行
     return s;
   })(),
   posted: store.get(K.posted, []),
@@ -941,7 +943,7 @@ function renderSettings() {
   $('#sHonorific').value = s.honorific;
   $('#sSep').value = s.nameSep;
   $('#sTagMode').value = s.tagMode;
-  $('#sAutoSave').checked = s.autoSave !== false;
+  $('#sSaveMode').value = s.saveMode || 'posted';
   $('#about').textContent = 'EventSnap v' + APP_VERSION + '・イベント ' + state.events.length + ' 件・投稿記録 ' + state.posted.length + ' 件';
 }
 
@@ -955,7 +957,7 @@ function addPhotos(files, opts) {
   list.sort((a, b) => a.lastModified - b.lastModified);
   const firstNew = state.queue.length;
   for (const f of list) {
-    const item = { id: uid('q'), file: f, url: URL.createObjectURL(f), time: f.lastModified || Date.now(), done: false };
+    const item = { id: uid('q'), file: f, url: URL.createObjectURL(f), time: f.lastModified || Date.now(), done: false, fromCam: !!opts.fromCam };
     state.queue.push(item);
     mediaStore.put(item);
   }
@@ -1037,7 +1039,12 @@ async function sharePost() {
 
 function afterPosted(ev, items, copied) {
   recordPosted(ev);
-  items.forEach((x) => { x.done = true; mediaStore.put(x); });
+  items.forEach((x) => {
+    x.done = true;
+    // 連写カメラで撮った写真は端末に無いので、投稿に使ったものだけ保存する
+    if (x.fromCam && !x.saved && state.settings.saveMode === 'posted') { downloadFile(x.file); x.saved = true; }
+    mediaStore.put(x);
+  });
   state.pick = [];
   const moved = items.length ? nextPhoto() : false;
   if (!moved) resetDraft();
@@ -1159,7 +1166,7 @@ function bind() {
   $('#preview').addEventListener('click', (e) => {
     if (e.target.id === 'btnRemovePhoto') removeCurrentPhoto();
     if (e.target.id === 'btnClearDone') clearDonePhotos();
-    if (e.target.id === 'btnSaveMedia') { const it = state.queue[state.current]; if (it) { downloadFile(it.file); toast('ダウンロードフォルダに保存しました'); } }
+    if (e.target.id === 'btnSaveMedia') { const it = state.queue[state.current]; if (it) { downloadFile(it.file); it.saved = true; mediaStore.put(it); toast('ダウンロードフォルダに保存しました'); } }
     if (e.target.closest('#btnPick')) { const it = state.queue[state.current]; if (it) togglePick(it.id); }
   });
 
@@ -1307,7 +1314,8 @@ function bind() {
       honorific: $('#sHonorific').value,
       nameSep: $('#sSep').value,
       tagMode: $('#sTagMode').value,
-      autoSave: $('#sAutoSave').checked,
+      saveMode: $('#sSaveMode').value,
+      camQuality: state.settings.camQuality || 'fast',
     };
     store.set(K.settings, state.settings);
     toast('保存しました');
@@ -1356,14 +1364,14 @@ const mediaStore = {
     } catch (e) { return null; }
   },
   put(it) {
-    return this.tx('readwrite', (st) => st.put({ id: it.id, blob: it.file, name: it.file.name, type: it.file.type, time: it.time, done: !!it.done }));
+    return this.tx('readwrite', (st) => st.put({ id: it.id, blob: it.file, name: it.file.name, type: it.file.type, time: it.time, done: !!it.done, fromCam: !!it.fromCam, saved: !!it.saved }));
   },
   del(id) { return this.tx('readwrite', (st) => st.delete(id)); },
   async loadAll() {
     const rows = (await this.tx('readonly', (st) => st.getAll())) || [];
     return rows.map((r) => {
       const file = new File([r.blob], r.name || (r.id + '.jpg'), { type: r.type || r.blob.type, lastModified: r.time });
-      return { id: r.id, file, url: URL.createObjectURL(file), time: r.time, done: !!r.done };
+      return { id: r.id, file, url: URL.createObjectURL(file), time: r.time, done: !!r.done, fromCam: !!r.fromCam, saved: !!r.saved };
     });
   },
 };
@@ -1412,8 +1420,61 @@ async function openCamera() {
   cam.imageCapture = null;
   if ('ImageCapture' in window) { try { cam.imageCapture = new ImageCapture(cam.track); } catch (e) { cam.imageCapture = null; } }
   $('#camQuality').hidden = !cam.imageCapture;
+  cam.quality = cam.imageCapture ? (state.settings.camQuality || 'fast') : 'fast';
+  $('#camQuality').textContent = cam.quality === 'fast' ? '標準' : '高画質';
+  await tuneCamera();
   setupZoom();
   updateCamInfo();
+}
+
+// カメラを最大解像度・連続オートフォーカス／露出に（対応している端末のみ）
+async function tuneCamera() {
+  const t = cam.track;
+  if (!t || !t.getCapabilities) return;
+  const caps = t.getCapabilities();
+  const adv = {};
+  if (caps.focusMode && caps.focusMode.includes('continuous')) adv.focusMode = 'continuous';
+  if (caps.exposureMode && caps.exposureMode.includes('continuous')) adv.exposureMode = 'continuous';
+  if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes('continuous')) adv.whiteBalanceMode = 'continuous';
+  try {
+    if (caps.width && caps.height) await t.applyConstraints({ width: { ideal: caps.width.max }, height: { ideal: caps.height.max } });
+  } catch (e) { /* そのまま */ }
+  try { if (Object.keys(adv).length) await t.applyConstraints({ advanced: [adv] }); } catch (e) { /* 非対応 */ }
+  cam.photoMax = null;
+  if (cam.imageCapture && cam.imageCapture.getPhotoCapabilities) {
+    try {
+      const pc = await cam.imageCapture.getPhotoCapabilities();
+      if (pc.imageWidth && pc.imageHeight) cam.photoMax = { imageWidth: pc.imageWidth.max, imageHeight: pc.imageHeight.max };
+    } catch (e) { cam.photoMax = null; }
+  }
+}
+
+// 画面タップでその場所にピントを合わせる（対応端末のみ）
+async function tapFocus(ev) {
+  const t = cam.track;
+  if (!t || !t.getCapabilities) return;
+  const caps = t.getCapabilities();
+  const v = $('#camVideo');
+  const r = v.getBoundingClientRect();
+  // object-fit: contain の余白を除いた実映像の範囲で座標を出す
+  const vw = v.videoWidth, vh = v.videoHeight;
+  if (!vw || !vh) return;
+  const scale = Math.min(r.width / vw, r.height / vh);
+  const w = vw * scale, h = vh * scale;
+  const ox = r.left + (r.width - w) / 2, oy = r.top + (r.height - h) / 2;
+  const x = (ev.clientX - ox) / w, y = (ev.clientY - oy) / h;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return;
+  const ring = $('#camFocus');
+  ring.style.left = ev.clientX + 'px'; ring.style.top = ev.clientY + 'px';
+  ring.classList.remove('show'); void ring.offsetWidth; ring.classList.add('show');
+  const adv = {};
+  if ('pointsOfInterest' in caps || (t.getSettings && 'pointsOfInterest' in t.getSettings())) adv.pointsOfInterest = [{ x, y }];
+  if (caps.focusMode && caps.focusMode.includes('single-shot')) adv.focusMode = 'single-shot';
+  try { if (Object.keys(adv).length) await t.applyConstraints({ advanced: [adv] }); } catch (e) { /* 非対応 */ }
+  clearTimeout(cam.focusTimer);
+  cam.focusTimer = setTimeout(() => {
+    if (cam.track && caps.focusMode && caps.focusMode.includes('continuous')) cam.track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+  }, 4000);
 }
 
 function setupZoom() {
@@ -1451,12 +1512,12 @@ function flash() {
 }
 
 function camAdd(file) {
-  addPhotos([file], { quiet: true });
+  addPhotos([file], { quiet: true, fromCam: true });
   cam.count++;
   $('#camCount').textContent = cam.count;
   const url = state.queue[state.queue.length - 1].url;
   $('#camThumb').innerHTML = /^video\//.test(file.type) ? '<video src="' + url + '#t=0.1" muted></video>' : '<img src="' + url + '" alt="">';
-  if (state.settings.autoSave !== false) downloadFile(file);
+  if (state.settings.saveMode === 'all') downloadFile(file);
   updateCamInfo();
 }
 
@@ -1467,7 +1528,9 @@ async function takeShot() {
   try {
     let blob = null;
     if (cam.quality === 'high' && cam.imageCapture) {
-      try { blob = await cam.imageCapture.takePhoto(); } catch (e) { blob = null; }
+      try { blob = await cam.imageCapture.takePhoto(cam.photoMax || undefined); } catch (e) {
+        try { blob = await cam.imageCapture.takePhoto(); } catch (e2) { blob = null; }
+      }
     }
     if (!blob) {
       const v = $('#camVideo');
@@ -1542,9 +1605,12 @@ function bindCamera() {
   $('#camClose').addEventListener('click', closeCamera);
   $('#camDone').addEventListener('click', closeCamera);
   $('#camShutter').addEventListener('click', () => (cam.mode === 'photo' ? takeShot() : toggleRecord()));
+  $('#camVideo').addEventListener('click', tapFocus);
   document.querySelectorAll('[data-cammode]').forEach((b) => b.addEventListener('click', () => setCamMode(b.dataset.cammode)));
   $('#camQuality').addEventListener('click', () => {
     cam.quality = cam.quality === 'fast' ? 'high' : 'fast';
+    state.settings.camQuality = cam.quality;
+    store.set(K.settings, state.settings);
     $('#camQuality').textContent = cam.quality === 'fast' ? '標準' : '高画質';
     toast(cam.quality === 'fast' ? '標準：すばやく連写できます' : '高画質：1枚ごとに少し時間がかかります');
   });

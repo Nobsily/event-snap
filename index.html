@@ -143,7 +143,13 @@
     <h2>データ</h2>
     <div class="card">
       <div class="small muted">データはこの端末のブラウザの中だけに保存されます（サーバーには送りません）。</div>
-      <label class="check"><input type="checkbox" id="sAutoSave"> 連写カメラで撮った写真・動画を、端末にも自動で保存する（ダウンロードフォルダ）</label>
+      <label class="field">連写カメラで撮った写真・動画の端末への保存（ダウンロードフォルダ）
+        <select id="sSaveMode">
+          <option value="posted">投稿に使ったものだけ保存する</option>
+          <option value="all">撮ったものを全部保存する</option>
+          <option value="none">保存しない（アプリ内にだけ残す）</option>
+        </select>
+      </label>
       <div class="row">
         <button type="button" class="btn" id="btnClearPosted">投稿済みの記録を消す</button>
       </div>
@@ -237,6 +243,7 @@
 <div id="cam" class="cam" hidden>
   <video id="camVideo" playsinline muted autoplay></video>
   <div class="cam-flash" id="camFlash"></div>
+  <div class="cam-focus" id="camFocus"></div>
   <div class="cam-top">
     <button type="button" class="cam-btn" id="camClose" aria-label="閉じる">✕</button>
     <span id="camInfo" class="cam-info"></span>
