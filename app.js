@@ -3,7 +3,7 @@
  */
 'use strict';
 
-const APP_VERSION = '0.2.3';
+const APP_VERSION = '0.3.0';
 const SCHEMA = 'event-snap/2';
 
 // ------------------------------------------------------------------ 保存
@@ -45,7 +45,8 @@ const state = {
   })(),
   posted: store.get(K.posted, []),
   queue: [],          // {id, file, url, time, done}
-  current: -1,        // queue の何番目を表示中か
+  current: -1,        // queue の何番目を大きく表示中か
+  pick: [],           // この投稿に使う写真の id（選んだ順、最大4枚）
   selected: [],       // 選択中の出演者 id
   tagOverride: {},    // タグ → true/false（初期状態からの手動切り替え）
   query: '',
@@ -434,7 +435,8 @@ function perfRange(ev, p, refDate) {
 
 // 基準時刻：表示中の写真の撮影時刻（イベント当日のものなら）、なければ現在時刻
 function referenceTime(ev) {
-  const item = state.queue[state.current];
+  const firstPick = state.queue.find((q) => q.id === state.pick[0]);
+  const item = firstPick || state.queue[state.current];
   if (item && item.time && ev) {
     const d = new Date(item.time);
     const days = new Set([ev.date].concat(ev.performers.map((p) => p.date)).filter(Boolean));
@@ -539,24 +541,59 @@ function renderPost() {
   renderDraft(ev);
 }
 
+const MAX_PICK = 4;
+
 function renderQueue() {
   const q = $('#queue');
+  state.pick = state.pick.filter((id) => state.queue.some((x) => x.id === id));
   if (state.queue.length <= 1) {
     q.innerHTML = '';
   } else {
     q.innerHTML = state.queue
-      .map((it, i) => '<button type="button" class="qitem' + (i === state.current ? ' cur' : '') + (it.done ? ' done' : '') + '" data-q="' + i + '">' +
-        '<img src="' + it.url + '" alt="">' + (it.done ? '<span class="qbadge">済</span>' : '') + '</button>')
+      .map((it, i) => {
+        const n = state.pick.indexOf(it.id);
+        return '<button type="button" class="qitem' + (i === state.current ? ' cur' : '') + (it.done ? ' done' : '') + (n >= 0 ? ' picked' : '') + '" data-q="' + i + '">' +
+          '<img src="' + it.url + '" alt="">' +
+          (n >= 0 ? '<span class="qnum">' + (n + 1) + '</span>' : '') +
+          (it.done ? '<span class="qbadge">済</span>' : '') + '</button>';
+      })
       .join('');
   }
   const pv = $('#preview');
   const it = state.queue[state.current];
   if (!it) { pv.innerHTML = ''; return; }
   const remain = state.queue.filter((x) => !x.done).length;
-  pv.innerHTML = '<img src="' + it.url + '" alt="選んだ写真">' +
+  const n = state.pick.indexOf(it.id);
+  const full = n < 0 && state.pick.length >= MAX_PICK;
+  pv.innerHTML = '<img src="' + it.url + '" alt="表示中の写真">' +
     '<div class="pmeta small muted"><span>' + (it.time ? '撮影 ' + esc(hm(new Date(it.time))) : '') +
-    (state.queue.length > 1 ? '　' + (state.current + 1) + ' / ' + state.queue.length + '（未投稿 ' + remain + '）' : '') + '</span>' +
-    '<button type="button" class="btn" id="btnRemovePhoto">外す</button></div>';
+    (state.queue.length > 1 ? '　' + (state.current + 1) + ' / ' + state.queue.length + '（未投稿 ' + remain + '）' : '') + '</span></div>' +
+    '<div class="row pick-row">' +
+    '<button type="button" class="btn ' + (n >= 0 ? 'primary' : '') + '" id="btnPick"' + (full ? ' disabled' : '') + '>' +
+      (n >= 0 ? '✓ 投稿に使う（' + (n + 1) + '枚目）' : full ? '4枚まで選択済み' : '＋ 投稿に使う') + '</button>' +
+    '<button type="button" class="btn" id="btnRemovePhoto">一覧から消す</button>' +
+    (state.queue.some((x) => x.done) ? '<button type="button" class="btn" id="btnClearDone">投稿済みを消す</button>' : '') +
+    '</div>' +
+    '<div class="small muted">この投稿に使う写真：' + (state.pick.length ? state.pick.length + '枚（最大4枚・選んだ順に添付）' : 'なし') +
+    (state.queue.length > 1 ? '。下の一覧をタップで切り替え' : '') + '</div>';
+}
+
+function togglePick(id) {
+  const i = state.pick.indexOf(id);
+  if (i >= 0) state.pick.splice(i, 1);
+  else if (state.pick.length < MAX_PICK) state.pick.push(id);
+  else { toast('1回の投稿に使えるのは4枚までです'); return; }
+  renderQueue();
+  renderPerformers(activeEvent());
+}
+
+function clearDonePhotos() {
+  state.queue.filter((x) => x.done).forEach((x) => URL.revokeObjectURL(x.url));
+  const curId = state.queue[state.current] && state.queue[state.current].id;
+  state.queue = state.queue.filter((x) => !x.done);
+  const idx = state.queue.findIndex((x) => x.id === curId);
+  state.current = idx >= 0 ? idx : (state.queue.length ? 0 : -1);
+  render();
 }
 
 function renderPerformers(ev) {
@@ -915,23 +952,24 @@ function addPhotos(files) {
     state.queue.push({ id: uid('q'), file: f, url: URL.createObjectURL(f), time: f.lastModified || Date.now(), done: false });
   }
   state.current = firstNew;
-  resetDraft();
+  if (!state.pick.length) state.pick.push(state.queue[firstNew].id);
   render();
-  if (list.length > 1) toast(list.length + ' 枚を追加しました。1枚ずつ投稿できます');
+  if (list.length > 1) toast(list.length + ' 枚を追加しました。使う写真を選んでください（最大4枚）', 2500);
 }
 
 function removeCurrentPhoto() {
   const it = state.queue[state.current];
   if (!it) return;
   URL.revokeObjectURL(it.url);
+  state.pick = state.pick.filter((id) => id !== it.id);
   state.queue.splice(state.current, 1);
   state.current = Math.min(state.current, state.queue.length - 1);
   render();
 }
 
 function nextPhoto() {
-  const idx = state.queue.findIndex((x, i) => !x.done && i !== state.current);
-  if (idx >= 0) { state.current = idx; resetDraft(); return true; }
+  const idx = state.queue.findIndex((x) => !x.done);
+  if (idx >= 0) { state.current = idx; state.pick = [state.queue[idx].id]; resetDraft(); return true; }
   return false;
 }
 
@@ -963,17 +1001,18 @@ async function sharePost() {
   if (!ev) { toast('先にイベントを登録してください'); return; }
   if (!state.selected.length) { toast('出演者を選んでください'); return; }
   const text = buildDraft(ev);
-  const item = state.queue[state.current];
+  let items = state.pick.map((id) => state.queue.find((q) => q.id === id)).filter(Boolean);
+  if (!items.length && state.queue[state.current]) items = [state.queue[state.current]];
   const copied = await copyText(text);   // 共有先で本文が消えた時の保険
 
   const data = { text };
-  if (item) data.files = [item.file];
+  if (items.length) data.files = items.map((x) => x.file);
   const canShare = navigator.share && (!data.files || (navigator.canShare && navigator.canShare({ files: data.files })));
 
   if (canShare) {
     try {
       await navigator.share(data);
-      afterPosted(ev, item, copied);
+      afterPosted(ev, items, copied);
     } catch (e) {
       if (e && e.name === 'AbortError') toast('共有をキャンセルしました' + (copied ? '（本文はコピー済み）' : ''));
       else toast('共有できませんでした。本文はコピー済みです');
@@ -982,15 +1021,16 @@ async function sharePost() {
   }
   // 共有に対応していない環境（PC など）：本文だけ X の投稿画面に渡す
   window.open('https://x.com/intent/post?text=' + encodeURIComponent(text), '_blank');
-  toast(item ? '画像は X の画面で手動で添付してください' : 'X の投稿画面を開きました', 3000);
-  afterPosted(ev, item, copied);
+  toast(items.length ? '画像は X の画面で手動で添付してください' : 'X の投稿画面を開きました', 3000);
+  afterPosted(ev, items, copied);
 }
 
-function afterPosted(ev, item, copied) {
+function afterPosted(ev, items, copied) {
   recordPosted(ev);
-  if (item) item.done = true;
-  const moved = item ? nextPhoto() : false;
-  if (!item) resetDraft();
+  items.forEach((x) => { x.done = true; });
+  state.pick = [];
+  const moved = items.length ? nextPhoto() : false;
+  if (!moved) resetDraft();
   render();
   toast(moved ? '投稿済みにしました。次の写真へ' : '投稿済みにしました' + (copied ? '（本文はクリップボードにもあります）' : ''), 2500);
 }
@@ -1103,10 +1143,13 @@ function bind() {
     const b = e.target.closest('[data-q]');
     if (!b) return;
     state.current = Number(b.dataset.q);
-    resetDraft();
-    render();
+    renderQueue();
   });
-  $('#preview').addEventListener('click', (e) => { if (e.target.id === 'btnRemovePhoto') removeCurrentPhoto(); });
+  $('#preview').addEventListener('click', (e) => {
+    if (e.target.id === 'btnRemovePhoto') removeCurrentPhoto();
+    if (e.target.id === 'btnClearDone') clearDonePhotos();
+    if (e.target.closest('#btnPick')) { const it = state.queue[state.current]; if (it) togglePick(it.id); }
+  });
 
   $('#pSearch').addEventListener('input', (e) => { state.query = e.target.value; renderPerformers(activeEvent()); });
 
